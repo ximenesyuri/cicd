@@ -26,14 +26,26 @@ runs:
       run: |
         msg="${{ github.event.head_commit.message }}"
         max=${{ inputs.width }}
-        if [ ${#msg} -gt $max ]; then
-          msg="${msg:0:$max}..."
+
+        msg="${msg//$'\n'/ }"
+
+        if [ ${#msg} -gt "$max" ]; then
+          cut=$((max - 3))
+          if [ "$cut" -lt 0 ]; then
+            cut=0
+          fi
+          msg="${msg:0:$cut}..."
+        else
+          while [ ${#msg} -lt "$max" ]; do
+            msg="$msg "
+          done
         fi
+
         {
           echo "message<<EOF"
           echo "$msg"
           echo "EOF"
-        } >> "$GITHUB_OUTPUT"
+        } >> "$GITHUB_OUTPUT" 
 
     - name: Notify
       if: ${{ always() }}
