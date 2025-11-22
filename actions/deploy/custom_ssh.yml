@@ -1,0 +1,80 @@
+name: "Remote Docker Compose Deploy"
+description: "Rsync project to remote server and deploy using Docker Compose over SSH"
+
+inputs:
+  host:
+    description: "IP or hostname of the remote server"
+    required: true
+  username:
+    description: "SSH user for the remote server"
+    required: true
+  deploy_dir:
+    description: "Remote directory to deploy into"
+    required: true
+  ssh_key:
+    description: "SSH private key for the remote server"
+    required: true
+  custom_ssh_key_b64:
+    description: "base64 of custom SSH private key used in the image building"
+    required: true
+  custom_ssh_key_env:
+    description: "the name of the env secret in the docker-compose.yml waiting for the custom_ssh_key_b64"
+    required: true
+  pre:
+    description: "Optional shell commands to run before docker compose"
+    required: false
+    default: ""
+  prefix:
+    description: "Optional prefix for the docker compose command (e.g. env vars)"
+    required: false
+    default: ""
+  post:
+    description: "Optional shell commands to run after docker compose"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Set up SSH key
+      shell: bash
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ inputs.ssh_key }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ inputs.host }} >> ~/.ssh/known_hosts
+
+    - name: Rsync project to remote server
+      shell: bash
+      run: |
+        rsync -az --delete \
+          -e "ssh -o StrictHostKeyChecking=yes" \
+          --rsync-path="mkdir -p ~/${{ inputs.deploy_dir }} && rsync" \
+          ./ ${{ inputs.username }}@${{ inputs.host }}:${{ inputs.deploy_dir }}
+
+    - name: Deploy with Docker Compose via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ inputs.host }}
+        username: ${{ inputs.username }}
+        key: ${{ inputs.ssh_key }}
+        script: |
+          set -e
+          cd ${{ inputs.deploy_dir }}
+
+          cat << 'PRE_SCRIPT' | bash
+          ${{ inputs.pre }}
+          PRE_SCRIPT
+
+          docker compose down
+
+          ${{ inputs.prefix }} DOCKER_BUILDKIT=1 ${{ secrets.custom_ssh_key_env }}="{{ secrets.custom_ssh_key_b64 }}" docker compose up --build -d --remove-orphans
+
+          cat << 'POST_SCRIPT' | bash
+          ${{ inputs.post }}
+          POST_SCRIPT
+
+          docker image prune -af

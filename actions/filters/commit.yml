@@ -1,0 +1,79 @@
+name: 'Filter by commit validation'
+description: 'Validates the latest commit message against a specified pattern (starts with, contains, or matches regex).'
+inputs:
+  method:
+    description: 'Validation method: "starts", "contains", or "matches" (for regex).'
+    required: true
+    default: 'starts'
+  value:
+    description: 'The string or regex pattern to validate against the commit message.'
+    required: true
+
+outputs:
+  validation_result:
+    description: 'true if validation passed, false otherwise.'
+    value: ${{ steps.validate_commit.outputs.result }}
+  commit_message:
+    description: 'The full commit message that was validated.'
+    value: ${{ steps.get_commit_message.outputs.message }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get latest commit message
+      id: get_commit_message
+      shell: bash
+      run: |
+        echo "::set-output name=message::$(git log -1 --pretty=%B ${{ github.sha }})"
+
+    - name: Validate Commit Message
+      id: validate_commit
+      shell: bash
+      run: |
+        COMMIT_MESSAGE="${{ steps.get_commit_message.outputs.message }}"
+        METHOD="${{ inputs.method }}"
+        VALUE="${{ inputs.value }}"
+        VALID=false
+
+        echo "Validating commit message: '${COMMIT_MESSAGE}'"
+        echo "Method: '${METHOD}', Value: '${VALUE}'"
+
+        case "$METHOD" in
+          "starts")
+            if [[ "$COMMIT_MESSAGE" == "$VALUE"* ]]; then
+              VALID=true
+            fi
+            ;;
+          "contains")
+            if [[ "$COMMIT_MESSAGE" == *"$VALUE"* ]]; then
+              VALID=true
+            fi
+            ;;
+          "matches")
+            if echo "$COMMIT_MESSAGE" | grep -qE "^${VALUE}$"; then
+              VALID=true
+            fi
+            ;;
+          *)
+            echo "::error::Invalid method: '${METHOD}'. Must be 'starts', 'contains', or 'matches'."
+            echo "::set-output name=result::false"
+            exit 1
+            ;;
+        esac
+
+        if [[ "$VALID" == "true" ]]; then
+          echo "Validation successful!"
+          echo "::set-output name=result::true"
+        else
+          echo "::error::Commit message validation failed!"
+          echo "::error::  Method: '${METHOD}'"
+          echo "::error::  Expected pattern: '${VALUE}'"
+          echo "::error::  Actual message: '${COMMIT_MESSAGE}'"
+          echo "::set-output name=result::false"
+          exit 1
+        fi

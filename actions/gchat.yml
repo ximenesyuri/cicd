@@ -1,0 +1,117 @@
+name: "gchat"
+description: "Send a gchat notification for commit/PR/deploy events"
+
+inputs:
+  webhook:
+    description: "Incoming webhook URL for the gchat space"
+    required: true
+  type:
+    description: 'Notification type: "commit", "pr"/"PR", or "deploy"'
+    required: true
+  title:
+    description: "Optional title; if empty, <org>/<repo> is used"
+    required: false
+    default: ""
+  width:
+    description: "the gchat card width"
+    required: false
+    default: 100
+
+runs:
+  using: "composite"
+  steps:
+    - name: Prepare data
+      id: notify-data
+      shell: bash
+      run: |
+        msg="${{ github.event.head_commit.message }}"
+        max=${{ input.width }}
+        if [ ${#msg} -gt $max ]; then
+          msg="${msg:0:$max}..."
+        fi
+        {
+          echo "message<<EOF"
+          echo "$msg"
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Notify
+      if: ${{ always() }}
+      env:
+        STATUS_COLOR: ${{ job.status == 'success' && '#00C853' || '#FF1744' }}
+        STATUS_ICON: ${{ job.status == 'success' && 'check_circle' || 'error' }}
+      uses: SimonScholz/google-chat-action@main
+      with:
+        webhookUrl: ${{ inputs.webhook }}
+        jobStatus: ${{ job.status }}
+
+        title: '[ ${{ inputs.type }}: ${{ inputs.title || github.repository }} ]'
+
+        createDefaultSection: false
+        collapsibleDefaultSection: false
+        additionalSections: |
+          [{
+            "widgets": [
+              {
+                "decoratedText": {
+                  "icon": {
+                    "materialIcon": {
+                      "name": "${{ env.STATUS_ICON }}"
+                    }
+                  },
+                  "text": "<b><font color='${{ env.STATUS_COLOR }}'>${{ job.status }}</font></b>"
+                }
+              },
+              {
+                "decoratedText": {
+                  "icon": {
+                    "materialIcon": {
+                      "name": "account_circle"
+                    }
+                  },
+                  "text": ${{ toJSON(github.event.head_commit.author.name) }},
+                  "bottomLabel": ${{ toJSON(github.event.head_commit.author.email) }}
+                }
+              },
+              {
+                "decoratedText": {
+                  "icon": {
+                    "materialIcon": {
+                      "name": "commit"
+                    }
+                  },
+                  "text": ${{ toJSON(steps.notify-data.outputs.message) }},
+                  "bottomLabel": ${{ toJSON(github.sha_short) }}
+                }
+              },
+              {
+                "buttonList": {
+                  "buttons": [
+                    {
+                      "text": "repo",
+                      "type": "OUTLINED",
+                      "onClick": {
+                        "openLink": {
+                          "url": "https://github.com/${{ github.repository }}"
+                        }
+                      }
+                    },
+                    {
+                      "text": "commit",
+                      "type": "OUTLINED",
+                      "onClick": {
+                        "openLink": {
+                          "url": "https://github.com/${{ github.repository }}/commit/${{ github.sha }}"
+                        }
+                      }
+                    ${{ inputs.type == 'commit'
+                        && ''
+                        || (inputs.type == 'pr' || inputs.type == 'PR')
+                        && format(',{"text":"PR","type":"OUTLINED","onClick":{"openLink":{"url":"{0}"}}}', github.event.pull_request.html_url)
+                        || format(',{"text":"workflow","type":"OUTLINED","onClick":{"openLink":{"url":"https://github.com/{0}/actions/runs/{1}"}}}', github.repository, github.run_id)
+                    }}
+                  ]
+                }
+              }
+            ]
+          }]

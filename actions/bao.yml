@@ -1,0 +1,80 @@
+name: "Get Secrets"
+description: "Fetch secrets from OpenBao and expose them as environment variables"
+
+inputs:
+  url:
+    description: "Base URL of the bao instance"
+    required: true
+  token:
+    description: "Token used to authenticate"
+    required: true
+  mount:
+    description: "Name of the KV mount in the bao instance"
+    required: true
+    default: "kv"
+  paths:
+    description: |
+      Newline-separated list of secret paths within the KV engine.
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install jq
+      shell: bash
+      run: |
+        if ! command -v jq >/dev/null 2>&1; then
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+        fi
+
+    - name: Fetch secrets
+      shell: bash
+      env:
+        OPENBAO_URL: ${{ inputs.url }}
+        OPENBAO_TOKEN: ${{ inputs.token }}
+        OPENBAO_MOUNT: ${{ inputs.mount }}
+        OPENBAO_PATHS: ${{ inputs.paths }}
+      run: |
+        set -euo pipefail
+
+        echo "Fetching secrets from OpenBao at $OPENBAO_URL..."
+
+        while IFS= read -r raw_path; do
+          path="${raw_path#"${raw_path%%[![:space:]]*}"}"
+          path="${path%"${path##*[![:space:]]}"}"
+
+          if [ -z "$path" ]; then
+            continue
+          fi
+
+          api_url="$OPENBAO_URL/v1/$OPENBAO_MOUNT/data/$path"
+
+          # Fetch secret JSON
+          json=$(curl -sS -f \
+            -H "X-OpenBao-Token: $OPENBAO_TOKEN" \
+            "$api_url")
+
+          value=$(echo "$json" | jq -r '
+            .data.data.value
+            // ( .data.data | to_entries[0].value )
+          ')
+
+          if [ "$value" = "null" ] || [ -z "$value" ]; then
+            echo "Warning: No value found for secret path '$path' (skipping)" >&2
+            continue
+          fi
+
+          env_name=$(echo "$path" \
+            | tr '[:lower:]' '[:upper:]' \
+            | sed -E 's/[^A-Z0-9]+/_/g')
+
+          echo "Exporting secret from path '$path' as env var '$env_name'"
+
+          {
+            echo "${env_name}<<EOF"
+            echo "$value"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+        done <<< "$OPENBAO_PATHS"
