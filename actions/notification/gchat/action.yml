@@ -15,7 +15,7 @@ inputs:
   width:
     description: "the gchat card width"
     required: false
-    default: 100
+    default: "100"
 
 runs:
   using: "composite"
@@ -107,8 +107,8 @@ runs:
                     ${{ inputs.type == 'commit'
                         && ''
                         || (inputs.type == 'pr' || inputs.type == 'PR')
-                        && format(',{"text":"PR","type":"OUTLINED","onClick":{"openLink":{"url":"{0}"}}}', github.event.pull_request.html_url)
-                        || format(',{"text":"workflow","type":"OUTLINED","onClick":{"openLink":{"url":"https://github.com/{0}/actions/runs/{1}"}}}', github.repository, github.run_id)
+                        && format(',{{"text":"PR","type":"OUTLINED","onClick":{{"openLink":{{"url":"{0}"}}}}}}', github.event.pull_request.html_url)
+                        || format(',{{"text":"workflow","type":"OUTLINED","onClick":{{"openLink":{{"url":"https://github.com/{0}/actions/runs/{1}"}}}}}}', github.repository, github.run_id)
                     }}
                   ]
                 }
