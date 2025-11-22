@@ -25,7 +25,7 @@ runs:
       shell: bash
       run: |
         msg="${{ github.event.head_commit.message }}"
-        max=${{ input.width }}
+        max=${{ inputs.width }}
         if [ ${#msg} -gt $max ]; then
           msg="${msg:0:$max}..."
         fi
