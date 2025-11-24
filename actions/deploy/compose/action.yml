@@ -75,9 +75,9 @@ runs:
           cd ${{ inputs.deploy_dir }}
 
           if [ -n "${{ inputs.envs }}" ]; then
-            touch ${{ inputs.deploy_dir }}/.env
-            printf '%s\n' "${{ inputs.envs }}" > ${{ inputs.deploy_dir }}/.env
-            . ${{ inputs.deploy_dir }}/.env
+            touch ~/${{ inputs.deploy_dir }}/.env
+            printf '%s\n' "${{ inputs.envs }}" > ~/${{ inputs.deploy_dir }}/.env
+            . ~/${{ inputs.deploy_dir }}/.env
           fi
 
           cat << 'PRE_SCRIPT' | bash
