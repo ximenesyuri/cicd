@@ -35,7 +35,10 @@ inputs:
     required: false
     default: "false"
   envs:
-    description: Multiline string, one KEY=VALUE per line.
+    description: |
+      Optional environment variables to export on the remote server
+      before running pre/post and docker compose.
+      Multiline string, one KEY=VALUE per line.
     required: false
     default: ""
 
@@ -71,11 +74,8 @@ runs:
           set -e
           cd ${{ inputs.deploy_dir }}
 
-          # Export envs (if provided) on the remote host
           if [ -n "${{ inputs.envs }}" ]; then
-            cat > /tmp/deploy_envs << 'DEPLOY_ENVS'
-            ${{ inputs.envs }}
-            DEPLOY_ENVS
+            printf '%s\n' "${{ inputs.envs }}" > /tmp/deploy_envs
             set -a
             . /tmp/deploy_envs
             set +a
