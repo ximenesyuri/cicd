@@ -32,6 +32,14 @@ inputs:
     description: "Optional shell commands to run after docker compose"
     required: false
     default: ""
+  rebuild:
+    description: "Rebuild the image before the deploy"
+    required: false
+    default: "false"
+  prune:
+    description: "Set to 'true' to prune unused imagens in the end of the workflow"
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -71,10 +79,16 @@ runs:
 
           docker compose down
 
+          if [ "${{ inputs.rebuild }}" = "true" ]; then
+            ${{ inputs.prefix }} DOCKER_BUILDKIT=1 ${{ secrets.custom_ssh_key_env }}="{{ secrets.custom_ssh_key_b64 }}" docker compose build --no-cache
+          fi
+
           ${{ inputs.prefix }} DOCKER_BUILDKIT=1 ${{ secrets.custom_ssh_key_env }}="{{ secrets.custom_ssh_key_b64 }}" docker compose up --build -d --remove-orphans
 
           cat << 'POST_SCRIPT' | bash
           ${{ inputs.post }}
           POST_SCRIPT
 
-          docker image prune -af
+          if [ "${{ inputs.prune }}" = "true" ]; then
+            docker image prune -af
+          fi
