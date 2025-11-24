@@ -34,6 +34,10 @@ inputs:
     description: "Set to 'true' to prune unused imagens in the end of the workflow"
     required: false
     default: "false"
+  envs:
+    description: Multiline string, one KEY=VALUE per line.
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -67,6 +71,16 @@ runs:
           set -e
           cd ${{ inputs.deploy_dir }}
 
+          # Export envs (if provided) on the remote host
+          if [ -n "${{ inputs.envs }}" ]; then
+            cat > /tmp/deploy_envs << 'DEPLOY_ENVS'
+            ${{ inputs.envs }}
+            DEPLOY_ENVS
+            set -a
+            . /tmp/deploy_envs
+            set +a
+          fi
+
           cat << 'PRE_SCRIPT' | bash
           ${{ inputs.pre }}
           PRE_SCRIPT
@@ -86,3 +100,4 @@ runs:
           if [ "${{ inputs.prune }}" = "true" ]; then
             docker image prune -af
           fi
+
