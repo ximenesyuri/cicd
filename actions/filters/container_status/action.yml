@@ -1,0 +1,153 @@
+name: "Docker Compose Health Check"
+description: "Wait for Docker Compose services to become healthy/running"
+
+inputs:
+  timeout:
+    description: "Max seconds to wait for containers to become healthy/running"
+    required: false
+    default: "120"
+  interval:
+    description: "Seconds between status checks"
+    required: false
+    default: "5"
+  services:
+    description: |
+      Optional list of services to check.
+      If empty, checks all services from `docker compose ps --services`.
+      Can be space- or newline-separated.
+    required: false
+    default: ""
+  working-directory:
+    description: "Directory containing docker-compose.yml / compose.yaml"
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check Docker Compose services health/running status
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -e
+
+        timeout=${{ inputs.timeout }}
+        interval=${{ inputs.interval }}
+        services_input="${{ inputs.services }}"
+
+        if ! [[ "$timeout" =~ ^[0-9]+$ ]] || ! [[ "$interval" =~ ^[0-9]+$ ]]; then
+          echo "timeout and interval must be positive integers."
+          exit 1
+        fi
+
+        if [ "$interval" -le 0 ]; then
+          echo "interval must be > 0."
+          exit 1
+        fi
+
+        max_attempts=$(( timeout / interval ))
+        if [ "$max_attempts" -le 0 ]; then
+          max_attempts=1
+        fi
+
+        if [ -n "$services_input" ]; then
+          echo "Using provided services list."
+          services="$services_input"
+        else
+          echo "No services list provided; using all services from 'docker compose ps --services'."
+          services="$(docker compose ps --services 2>/dev/null || echo "")"
+        fi
+
+        if [ -z "$services" ]; then
+          echo "No services found to check."
+          exit 1
+        fi
+
+        echo "Services to check:"
+        for s in $services; do
+          echo " - $s"
+        done
+
+        failed=false
+
+        for s in $services; do
+          echo "---- Checking service: $s ----"
+
+          cid="$(docker compose ps -q "$s" 2>/dev/null || echo "")"
+          if [ -z "$cid" ]; then
+            echo "Service '$s' has no container ID (container not started?)."
+            failed=true
+            continue
+          fi
+
+          has_hc="$(docker inspect -f '{{json .Config.Healthcheck}}' "$cid" 2>/dev/null || echo "null")"
+
+          if [ "$has_hc" != "null" ]; then
+            echo "Service '$s' has a healthcheck. Waiting up to ${timeout}s..."
+            attempt=1
+            health=""
+
+            while [ "$attempt" -le "$max_attempts" ]; do
+              health="$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo "")"
+
+              if [ "$health" = "healthy" ]; then
+                echo "Service '$s' is healthy."
+                break
+              elif [ "$health" = "unhealthy" ]; then
+                echo "Service '$s' is UNHEALTHY. Logs:"
+                docker logs "$cid" || true
+                failed=true
+                break
+              else
+                echo "Service '$s' health: ${health:-unknown}. Waiting..."
+                sleep "$interval"
+                attempt=$((attempt + 1))
+              fi
+            done
+
+            if [ "$health" != "healthy" ] && [ "$health" != "unhealthy" ]; then
+              echo "Timed out waiting for healthcheck on '$s'. Last health: ${health:-unknown}"
+              docker logs "$cid" || true
+              failed=true
+            fi
+
+          else
+            echo "Service '$s' has no healthcheck. Waiting for 'running' state (up to ${timeout}s)..."
+            attempt=1
+            state=""
+
+            while [ "$attempt" -le "$max_attempts" ]; do
+              state="$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo "")"
+
+              if [ "$state" = "running" ]; then
+                echo "Service '$s' is running."
+                break
+              elif [ "$state" = "exited" ] || [ "$state" = "dead" ]; then
+                echo "Service '$s' is not running (state: $state). Logs:"
+                docker logs "$cid" || true
+                failed=true
+                break
+              else
+                echo "Service '$s' state: ${state:-unknown}. Waiting..."
+                sleep "$interval"
+                attempt=$((attempt + 1))
+              fi
+            done
+
+            if [ "$state" != "running" ] && [ "$state" != "exited" ] && [ "$state" != "dead" ]; then
+              echo "Timed out waiting for service '$s' to be running. Last state: ${state:-unknown}"
+              docker logs "$cid" || true
+              failed=true
+            fi
+          fi
+
+          echo "---- Finished checking service: $s ----"
+        done
+
+        if [ "$failed" = true ]; then
+          echo "One or more services failed to become healthy/running."
+          exit 1
+        fi
+
+        echo "All checked services are healthy/running."
+
