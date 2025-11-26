@@ -1,0 +1,100 @@
+name: 'Deploy Google Apps Script'
+description: 'Deploys Apps Script code from the current repository to Google using clasp with a Service Account.'
+
+inputs:
+  sa_key:
+    description: 'The JSON key for the Google Service Account (base64 encoded or plain JSON).'
+    required: true
+  script_id:
+    description: 'The Script ID of the Google Apps Script project to deploy to.'
+    required: true
+  root_dir:
+    description: 'The path to the Apps Script project files relative to the repository root.'
+    required: false
+    default: '.'
+  clasp_version:
+    description: 'Clasp version to install (e.g., "^2.4.1" or "latest").'
+    required: false
+    default: 'latest'
+
+outputs:
+  deployed_version_description:
+    description: 'The description of the Apps Script version created during deployment.'
+    value: ${{ steps.create_version.outputs.version_description_clasp }}
+  deployed_version_number:
+    description: 'The number of the Apps Script version created during deployment.'
+    value: ${{ steps.create_version.outputs.version_number_clasp }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Change to script root directory
+      run: |
+        echo "Changing directory to ${{ inputs.root_dir }}"
+        cd ${{ inputs.root_dir }}
+        echo "CWD: $(pwd)"
+      shell: bash
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '16'
+
+    - name: Install clasp
+      run: npm install -g @google/clasp@${{ inputs.clasp_version }}
+      shell: bash
+
+    - name: Configure .clasp.json with script ID
+      run: |
+        echo "{\"scriptId\":\"${{ inputs.script_id }}\"}" > .clasp.json
+      shell: bash
+
+    - name: Configure clasp with Service Account credentials
+      run: |
+        # Make sure .config directory exists for clasp credentials
+        mkdir -p ~/.config
+        SA_KEY_CONTENT="${{ inputs.sa_key }}"
+        # Check if the key seems to be base64 encoded by looking for opening brace or not starting with it
+        if [[ ! "$SA_KEY_CONTENT" =~ ^\{ ]]; then
+          echo "$SA_KEY_CONTENT" | base64 --decode > ~/.config/clasp-sa-key.json
+        else
+          echo "$SA_KEY_CONTENT" > ~/.config/clasp-sa-key.json
+        fi
+        
+        clasp login --creds ~/.config/clasp-sa-key.json
+      shell: bash
+
+    - name: Validate Apps Script manifest (appsscript.json)
+      run: |
+        if [ ! -f "appsscript.json" ]; then
+          echo "::error file=appsscript.json::appsscript.json not found in ${{ inputs.root_dir }}! Apps Script projects require a manifest file."
+          exit 1
+        fi
+      shell: bash
+
+    - name: Push Apps Script to Google
+      run: clasp push --force
+      shell: bash
+
+    - name: Create Apps Script Version and Get ID
+      id: create_version
+      run: |
+        VERSION_DESCRIPTION="Deployed by GitHub Actions - commit ${{ github.sha }} on $(date +%Y-%m-%d %H:%M:%S %Z)"
+        echo "Creating Apps Script version: ${VERSION_DESCRIPTION}"
+        VERSION_OUTPUT=$(clasp version "$VERSION_DESCRIPTION")
+        echo "clasp version output: $VERSION_OUTPUT"
+        
+        VERSION_NUMBER=$(echo "$VERSION_OUTPUT" | grep -oP '(?<=Created version )\d+')
+        
+        if [ -z "$VERSION_NUMBER" ]; then
+          echo "::warning::Could not extract version number from clasp output."
+          VERSION_NUMBER="unknown"
+        fi
+        
+        echo "deployed_version_description=$VERSION_DESCRIPTION" >> $GITHUB_OUTPUT
+        echo "deployed_version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
+      shell: bash
+
